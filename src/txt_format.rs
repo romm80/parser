@@ -1,5 +1,5 @@
-use crate::error::Error;
 use crate::Transaction;
+use crate::error::{ParseError, WriteError};
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 
@@ -12,10 +12,16 @@ const TIMESTAMP: &str = "TIMESTAMP";
 const STATUS: &str = "STATUS";
 const DESCRIPTION: &str = "DESCRIPTION";
 
-pub fn read<B: BufRead>(reader: B) -> Result<Vec<Transaction>, Error> {
+struct FieldValue {
+    value: String,
+    line: usize,
+}
+
+pub fn read<B: BufRead>(reader: B) -> Result<Vec<Transaction>, ParseError> {
     let mut transactions = Vec::new();
     let mut tx_map = HashMap::new();
-    for line in reader.lines() {
+
+    for (idx, line) in reader.lines().enumerate() {
         match line {
             Ok(line) => {
                 if line.starts_with('#') {
@@ -28,10 +34,16 @@ pub fn read<B: BufRead>(reader: B) -> Result<Vec<Transaction>, Error> {
                 }
 
                 if let Some((key, value)) = line.split_once(':') {
-                    tx_map.insert(key.trim().to_string(), value.trim().to_string());
+                    tx_map.insert(
+                        key.trim().to_string(),
+                        FieldValue {
+                            value: value.trim().to_string(),
+                            line: idx + 1,
+                        },
+                    );
                 }
             }
-            Err(err) => return Err(Error::Parse(format!("read line: {:?}", err))),
+            Err(e) => return Err(ParseError::Io(e)),
         }
     }
     if !tx_map.is_empty() {
@@ -41,59 +53,54 @@ pub fn read<B: BufRead>(reader: B) -> Result<Vec<Transaction>, Error> {
     Ok(transactions)
 }
 
-pub fn write<W: Write>(w: &mut W, transactions: Vec<Transaction>) -> Result<(), Error> {
+pub fn write<W: Write>(w: &mut W, transactions: Vec<Transaction>) -> Result<(), WriteError> {
     for tx in transactions {
-        writeln!(w, "{}: {}", TX_ID, tx.tx_id).
-            map_err(|e| Error::Write(format!("write tx_id: {:?}", e)))?;
-        writeln!(w, "{}: {}", TX_TYPE, tx.tx_type).
-            map_err(|e| Error::Write(format!("write tx_type: {:?}", e)))?;
-        writeln!(w, "{}: {}", FROM_USER_ID, tx.from_user_id).
-            map_err(|e| Error::Write(format!("write from_user_id: {:?}", e)))?;
-        writeln!(w, "{}: {}", TO_USER_ID, tx.to_user_id).
-            map_err(|e| Error::Write(format!("write to_user_id: {:?}", e)))?;
-        writeln!(w, "{}: {}", AMOUNT, tx.amount).
-            map_err(|e| Error::Write(format!("write amount: {:?}", e)))?;
-        writeln!(w, "{}: {}", TIMESTAMP, tx.timestamp).
-            map_err(|e| Error::Write(format!("write timestamp: {:?}", e)))?;
-        writeln!(w, "{}: {}", STATUS, tx.status).
-            map_err(|e| Error::Write(format!("write status: {:?}", e)))?;
-        writeln!(w, "{}: {}", DESCRIPTION, tx.description).
-            map_err(|e| Error::Write(format!("write description: {:?}", e)))?;
-        write!(w, "\n").map_err(|e| Error::Write(format!("write empty line: {:?}", e)))?;
+        writeln!(w, "{}: {}", TX_ID, tx.tx_id)?;
+        writeln!(w, "{}: {}", TX_TYPE, tx.tx_type)?;
+        writeln!(w, "{}: {}", FROM_USER_ID, tx.from_user_id)?;
+        writeln!(w, "{}: {}", TO_USER_ID, tx.to_user_id)?;
+        writeln!(w, "{}: {}", AMOUNT, tx.amount)?;
+        writeln!(w, "{}: {}", TIMESTAMP, tx.timestamp)?;
+        writeln!(w, "{}: {}", STATUS, tx.status)?;
+        writeln!(w, "{}: {}", DESCRIPTION, tx.description)?;
+        writeln!(w)?;
     }
     Ok(())
 }
 
-impl TryFrom<HashMap<String, String>> for Transaction {
-    type Error = Error;
+impl TryFrom<HashMap<String, FieldValue>> for Transaction {
+    type Error = ParseError;
 
-    fn try_from(map: HashMap<String, String>) -> Result<Self, Self::Error> {
-        if map.len() != 8 {
-            return Err(Error::Parse(format!("field count: {:?}", map)));
-        };
+    fn try_from(map: HashMap<String, FieldValue>) -> Result<Self, Self::Error> {
+        let mut desc = "".to_string();
+        if let Some(fv) = map.get(DESCRIPTION) {
+            desc = fv.value.clone();
+        }
         Ok(Transaction {
-            tx_id: map[TX_ID].parse().map_err(|e| {
-                Error::Parse(format!("tx_id parse: {:?}", e))
-            })?,
-            tx_type: map[TX_TYPE].parse().map_err(|e| {
-                Error::Parse(format!("tx_type: {:?}", e))
-            })?,
-            from_user_id: map[FROM_USER_ID].parse().map_err(|e| {
-                Error::Parse(format!("from_user_id: {:?}", e))
-            })?,
-            to_user_id: map[TO_USER_ID].parse().map_err(|e| {
-                Error::Parse(format!("to_user_id: {:?}", e))
-            })?,
-            amount: map[AMOUNT].parse().map_err(|e| {
-                Error::Parse(format!("amount: {:?}", e))
-            })?,
-            timestamp: map[TIMESTAMP].parse().map_err(|e| {
-                Error::Parse(format!("timestamp: {:?}", e))
-            })?,
-            status: map[STATUS].parse().map_err(|e| {
-                Error::Parse(format!("status: {:?}", e))
-            })?,
-            description: map[DESCRIPTION].to_string(),
+            tx_id: parse_field(TX_ID, map.get(TX_ID))?,
+            tx_type: parse_field(TX_TYPE, map.get(TX_TYPE))?,
+            from_user_id: parse_field(FROM_USER_ID, map.get(FROM_USER_ID))?,
+            to_user_id: parse_field(TO_USER_ID, map.get(TO_USER_ID))?,
+            amount: parse_field(AMOUNT, map.get(AMOUNT))?,
+            timestamp: parse_field(TIMESTAMP, map.get(TIMESTAMP))?,
+            status: parse_field(STATUS, map.get(STATUS))?,
+            description: desc,
         })
+    }
+}
+
+fn parse_field<T: std::str::FromStr>(field: &str, values: Option<&FieldValue>) -> Result<T, ParseError> {
+    match values {
+        Some(v) => {v
+            .value
+            .parse()
+            .map_err(|_| ParseError::InvalidTextFieldValue {
+                field: field.to_string(),
+                value: v.value.to_string(),
+                line_num: v.line,
+            })}
+        None => {
+            Err(ParseError::FieldValueNotFound(field.to_string()))
+        }
     }
 }

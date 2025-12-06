@@ -20,8 +20,8 @@ fn main() {
     match parser::read(input, args.input_format.into()) {
         Ok(tx) => match parser::write(output, args.output_format.into(), tx) {
             Ok(_) => println!("Success"),
-            Err(e) => eprintln!("{}", e),
+            Err(e) => eprintln!("parse file '{}': {}", args.output.unwrap(), e),
         },
-        Err(e) => eprintln!("{}", e),
+        Err(e) => eprintln!("parse file '{}': {}", args.input.unwrap(),e),
     };
 }
