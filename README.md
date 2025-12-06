@@ -158,28 +158,6 @@ pub enum Format {
 }
 ```
 
-### Обработка ошибок
-
-```rust
-use parser::{read, Format, ParseError};
-
-match read(file, Format::Csv) {
-    Ok(transactions) => {
-        println!("Загружено {} транзакций", transactions.len());
-    }
-    Err(ParseError::InvalidHeaders(msg)) => {
-        eprintln!("Неверные заголовки CSV: {}", msg);
-    }
-    Err(ParseError::FieldValueNotFound(field)) => {
-        eprintln!("Отсутствует поле: {}", field);
-    }
-    Err(ParseError::InvalidTextFieldValue { field, value }) => {
-        eprintln!("Неверное значение поля {}: {}", field, value);
-    }
-    Err(e) => eprintln!("Ошибка парсинга: {}", e),
-}
-```
-
 ## Примеры использования
 
 ### Конвертация форматов
